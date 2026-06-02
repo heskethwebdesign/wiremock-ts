@@ -5,7 +5,7 @@ Thanks for your interest. This document is the source of truth for how the proje
 ## Getting started
 
 - Node 20+ (developed on Node 24) and npm.
-- `npm install` — note this regenerates the lockfile fully (see [Dependencies](#dependencies)).
+- `npm install`.
 - `npm run dev` runs the CLI under `tsx watch`.
 
 ## The gate
@@ -34,7 +34,7 @@ Don't push red.
 ## Dependencies
 
 - **Pin exact versions — never `^` or `~`.** Check the current version on npm before adding anything, and prefer the standard library or a small dependency over a heavy one.
-- After changing dependencies, **regenerate the lockfile with a full `npm install`** — do not use `npm install --package-lock-only`, which omits optional package nodes and makes `npm ci` fail.
+- After changing dependencies **or the version**, regenerate the lockfile with a **clean install**: `rm -rf node_modules package-lock.json && npm install`. A plain `npm install` over an existing `node_modules` (and `npm install --package-lock-only`) can prune optional platform packages from the lock, which makes `npm ci` fail on the CI runners; only a clean install reliably produces a complete lockfile.
 
 ## Tests
 
