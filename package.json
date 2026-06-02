@@ -1,10 +1,10 @@
 {
     "name": "wiremock-ts",
-    "version": "0.6.3",
+    "version": "0.6.4",
     "description": "A TypeScript-first HTTP mock server — WireMock, reimagined.",
     "type": "module",
     "license": "MIT",
-    "author": "Hesketh Web Design",
+    "author": "Matt Hesketh",
     "keywords": [
         "wiremock",
         "mock",

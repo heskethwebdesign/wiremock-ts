@@ -329,4 +329,4 @@ Coverage (`npm run test:coverage`, V8 provider): **~87% statements, ~90% lines, 
 
 ## Licence
 
-MIT © Hesketh Web Design
+MIT © Matt Hesketh
