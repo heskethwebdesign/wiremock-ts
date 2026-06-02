@@ -1,6 +1,6 @@
 {
     "name": "wiremock-ts",
-    "version": "0.6.2",
+    "version": "0.6.3",
     "description": "A TypeScript-first HTTP mock server — WireMock, reimagined.",
     "type": "module",
     "license": "MIT",
@@ -14,13 +14,13 @@
         "testing",
         "typescript"
     ],
-    "homepage": "https://github.com/heskethwebdesign/wiremock-ts#readme",
+    "homepage": "https://github.com/wrxck/wiremock-ts#readme",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/heskethwebdesign/wiremock-ts.git"
+        "url": "git+https://github.com/wrxck/wiremock-ts.git"
     },
     "bugs": {
-        "url": "https://github.com/heskethwebdesign/wiremock-ts/issues"
+        "url": "https://github.com/wrxck/wiremock-ts/issues"
     },
     "bin": {
         "wiremock-ts": "./dist/cli.js"

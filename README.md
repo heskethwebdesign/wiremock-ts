@@ -1,7 +1,7 @@
 # wiremock-ts
 
 [![npm version](https://img.shields.io/npm/v/wiremock-ts.svg)](https://www.npmjs.com/package/wiremock-ts)
-[![CI](https://github.com/heskethwebdesign/wiremock-ts/actions/workflows/ci.yml/badge.svg)](https://github.com/heskethwebdesign/wiremock-ts/actions/workflows/ci.yml)
+[![CI](https://github.com/wrxck/wiremock-ts/actions/workflows/ci.yml/badge.svg)](https://github.com/wrxck/wiremock-ts/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/wiremock-ts.svg)](./LICENSE)
 [![node](https://img.shields.io/node/v/wiremock-ts.svg)](https://nodejs.org)
 
