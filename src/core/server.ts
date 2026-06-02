@@ -1,8 +1,16 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
+import type { Duplex } from "node:stream";
+
+import { WebSocketServer, type WebSocket } from "ws";
 
 import { handleAdmin } from "../admin/adminApi";
-import { stubsFromOpenApi, type OpenApiDocument } from "../contract/openapi";
+import {
+    stubsFromOpenApi,
+    type OpenApiDocument,
+    type StubsFromOpenApiOptions,
+} from "../contract/openapi";
 import type { RequestPatternBuilder } from "../dsl/builders";
 import type {
     Fault,
@@ -27,6 +35,18 @@ export interface WireMockOptions {
     adminToken?: string;
     // when set, proxy and record targets are restricted to these hostnames.
     allowedProxyHosts?: string[];
+    // when set, the server listens over https using these pem strings.
+    https?: { key: string; cert: string };
+}
+
+export interface WebSocketStubOptions {
+    // messages pushed to the client as soon as it connects.
+    onConnect?: string[];
+    // echo every received text message back to the client.
+    echo?: boolean;
+    // compute a reply for each received message; return undefined to stay
+    // silent. runs in-process only.
+    reply?: (message: string) => string | undefined;
 }
 
 const sleep = (milliseconds: number): Promise<void> =>
@@ -88,7 +108,7 @@ export class WireMockServer {
     readonly registry = new StubRegistry();
     readonly journal = new RequestJournal();
 
-    #server: Server | undefined;
+    #server: Server | HttpsServer | undefined;
     readonly #port: number;
     readonly #host: string;
     #boundPort = 0;
@@ -96,12 +116,16 @@ export class WireMockServer {
     #originalFetch: typeof fetch | undefined;
     readonly #adminToken: string | undefined;
     readonly #allowedProxyHosts: string[] | undefined;
+    readonly #https: { key: string; cert: string } | undefined;
+    readonly #wsStubs = new Map<string, WebSocketStubOptions>();
+    #wss: WebSocketServer | undefined;
 
     constructor(options: WireMockOptions = {}) {
         this.#port = options.port ?? 8080;
         this.#host = options.host ?? "127.0.0.1";
         this.#adminToken = options.adminToken;
         this.#allowedProxyHosts = options.allowedProxyHosts;
+        this.#https = options.https;
     }
 
     #adminAuthorised(req: IncomingMessage): boolean {
@@ -138,10 +162,42 @@ export class WireMockServer {
 
     // register a stub for every operation in an openapi document and return
     // the generated mappings.
-    loadOpenApi(doc: OpenApiDocument): StubMapping[] {
-        const stubs = stubsFromOpenApi(doc);
+    loadOpenApi(doc: OpenApiDocument, options?: StubsFromOpenApiOptions): StubMapping[] {
+        const stubs = stubsFromOpenApi(doc, options);
         for (const stub of stubs) this.register(stub);
         return stubs;
+    }
+
+    // register a websocket endpoint at an exact path. clients connecting to it
+    // receive the configured scripted messages and optional echo/reply
+    // behaviour. registering the same path again replaces the previous stub.
+    stubWebSocket(path: string, options: WebSocketStubOptions = {}): void {
+        this.#wsStubs.set(path, options);
+    }
+
+    #handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+        const { pathname } = new URL(req.url ?? "/", "http://localhost");
+        const stub = this.#wsStubs.get(pathname);
+        const wss = this.#wss;
+        if (stub === undefined || wss === undefined) {
+            socket.destroy();
+            return;
+        }
+        wss.handleUpgrade(req, socket, head, (ws) => this.#openWebSocket(ws, stub));
+    }
+
+    #openWebSocket(ws: WebSocket, stub: WebSocketStubOptions): void {
+        for (const message of stub.onConnect ?? []) ws.send(message);
+        if (stub.reply === undefined && stub.echo !== true) return;
+        ws.on("message", (data: { toString(): string }) => {
+            const text = data.toString();
+            if (stub.reply !== undefined) {
+                const answer = stub.reply(text);
+                if (answer !== undefined) ws.send(answer);
+            } else {
+                ws.send(text);
+            }
+        });
     }
 
     countRequests(pattern: RequestPattern | RequestPatternBuilder): number {
@@ -338,15 +394,20 @@ export class WireMockServer {
     }
 
     get baseUrl(): string {
-        return `http://${this.#host}:${this.port}`;
+        return `${this.#https ? "https" : "http"}://${this.#host}:${this.port}`;
     }
 
     async start(): Promise<this> {
         if (this.#server) return this;
-        const server = createServer((req, res) => {
+        const handler = (req: IncomingMessage, res: ServerResponse): void => {
             this.#handle(req, res).catch((err: unknown) => this.#fail(res, err));
-        });
+        };
+        const server = this.#https
+            ? createHttpsServer({ key: this.#https.key, cert: this.#https.cert }, handler)
+            : createServer(handler);
         this.#server = server;
+        this.#wss = new WebSocketServer({ noServer: true });
+        server.on("upgrade", (req, socket, head) => this.#handleUpgrade(req, socket, head));
         await new Promise<void>((resolve, reject) => {
             const onError = (err: Error): void => reject(err);
             server.once("error", onError);
@@ -365,6 +426,11 @@ export class WireMockServer {
         const server = this.#server;
         if (!server) return;
         this.#server = undefined;
+        if (this.#wss) {
+            for (const client of this.#wss.clients) client.terminate();
+            this.#wss.close();
+            this.#wss = undefined;
+        }
         await new Promise<void>((resolve, reject) => {
             server.close((err) => (err ? reject(err) : resolve()));
         });

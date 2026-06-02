@@ -1,6 +1,17 @@
 import { randomUUID } from "node:crypto";
 
-import type { RequestPattern, StubMapping } from "../types";
+import type {
+    LoggedRequest,
+    RegisteredStub,
+    RequestPattern,
+    ResponseDefinition,
+    ResponseProvider,
+} from "../types";
+import {
+    compileRequestBodyValidators,
+    validateRequestBody,
+    type BodyValidator,
+} from "./validation";
 
 // a deliberately small structural view of the parts of an openapi 3 document
 // we read; callers pass their already-parsed spec.
@@ -25,8 +36,14 @@ interface OpenApiResponse {
     content?: Record<string, OpenApiMediaType>;
 }
 
+interface OpenApiRequestBody {
+    required?: boolean;
+    content?: Record<string, OpenApiMediaType>;
+}
+
 interface OpenApiOperation {
     responses?: Record<string, OpenApiResponse>;
+    requestBody?: OpenApiRequestBody;
 }
 
 export interface OpenApiDocument {
@@ -117,10 +134,38 @@ const pickResponse = (
     return { status, response };
 };
 
+export interface StubsFromOpenApiOptions {
+    // when true, operations with a request body schema validate incoming
+    // bodies and answer 400 with the violations when they do not conform.
+    validateRequests?: boolean;
+}
+
+// a stub whose response is gated by request-body validation: a conforming
+// body gets the schema-generated success response, a non-conforming one a 400.
+const validatingResponse =
+    (validator: BodyValidator, success: ResponseDefinition): ResponseProvider =>
+    (req: LoggedRequest): ResponseDefinition => {
+        const result = validateRequestBody(validator, req.body);
+        return result.ok
+            ? success
+            : {
+                  status: 400,
+                  jsonBody: {
+                      error: "Request body failed schema validation",
+                      errors: result.errors,
+                  },
+              };
+    };
+
 // turn an openapi document into ready-to-serve stub mappings, one per
-// operation, returning schema-generated json bodies.
-export const stubsFromOpenApi = (doc: OpenApiDocument): StubMapping[] => {
-    const stubs: StubMapping[] = [];
+// operation, returning schema-generated json bodies. with validateRequests,
+// operations that declare a request body schema reject non-conforming bodies.
+export const stubsFromOpenApi = (
+    doc: OpenApiDocument,
+    options: StubsFromOpenApiOptions = {},
+): RegisteredStub[] => {
+    const validators = options.validateRequests ? compileRequestBodyValidators(doc) : undefined;
+    const stubs: RegisteredStub[] = [];
     for (const [path, item] of Object.entries(doc.paths ?? {})) {
         for (const method of METHODS) {
             const operation = item[method];
@@ -136,16 +181,24 @@ export const stubsFromOpenApi = (doc: OpenApiDocument): StubMapping[] => {
                       ? generateSample(media.schema, doc)
                       : undefined;
 
-            stubs.push({
-                request: {
-                    method: method.toUpperCase() as RequestPattern["method"],
-                    ...toUrlMatcher(path),
-                },
-                response: {
-                    status: picked.status,
-                    ...(body === undefined ? {} : { jsonBody: body }),
-                },
-            });
+            const request = {
+                method: method.toUpperCase() as RequestPattern["method"],
+                ...toUrlMatcher(path),
+            };
+            const success: ResponseDefinition = {
+                status: picked.status,
+                ...(body === undefined ? {} : { jsonBody: body }),
+            };
+            const validator = validators?.get(`${method.toUpperCase()} ${path}`);
+            if (validator) {
+                stubs.push({
+                    request,
+                    response: {},
+                    responseProvider: validatingResponse(validator, success),
+                });
+            } else {
+                stubs.push({ request, response: success });
+            }
         }
     }
     return stubs;

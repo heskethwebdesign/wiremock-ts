@@ -9,13 +9,14 @@ A TypeScript-first HTTP mock server — [WireMock](https://wiremock.org/), reima
 
 Stand up a real HTTP server that returns the responses you stub, match incoming requests on almost anything, and verify what your code actually sent — through a fully-typed fluent API, a REST admin API, or a CLI. The same stubs can also serve **in-process** by intercepting `fetch`, with no socket at all.
 
-It runs on Node's built-in `http`; the only runtime dependencies are `zod` and `jsonpath-plus`.
+It runs on Node's built-in `http`/`https`. Runtime dependencies are `zod` (schemas), `jsonpath-plus` (JSONPath matching), `ajv` (OpenAPI request validation) and `ws` (WebSocket mocking).
 
 ## Contents
 
 - [Install](#install)
 - [Quick start](#quick-start)
 - [Two ways to serve](#two-ways-to-serve)
+- [HTTPS](#https)
 - [Request matching](#request-matching)
 - [Responses](#responses)
 - [Programmatic responses](#programmatic-responses)
@@ -25,7 +26,10 @@ It runs on Node's built-in `http`; the only runtime dependencies are `zod` and `
 - [Proxying](#proxying)
 - [Record and playback](#record-and-playback)
 - [Contract-first (OpenAPI)](#contract-first-openapi)
+- [GraphQL](#graphql)
+- [WebSockets](#websockets)
 - [Verification](#verification)
+- [Remote client SDK](#remote-client-sdk)
 - [CLI](#cli)
 - [Admin API](#admin-api)
 - [API reference](#api-reference)
@@ -94,6 +98,19 @@ wm.restoreFetch();
 ```
 
 Pass `interceptFetch({ passthrough: false })` to return `404` for unmatched requests instead of hitting the network.
+
+## HTTPS
+
+Pass a PEM key and certificate to serve over TLS; everything else (stubbing, the admin API, verification) is unchanged, and `baseUrl` reports an `https://` URL.
+
+```ts
+const wm = await new WireMockServer({
+    https: { key: pemKey, cert: pemCert },
+}).start();
+// wm.baseUrl === "https://127.0.0.1:<port>"
+```
+
+Bring your own certificate (for a fixed hostname) or generate a throwaway self-signed pair for tests.
 
 ## Request matching
 
@@ -245,6 +262,56 @@ wm.loadOpenApi(openapi); // registers a stub for every path + method
 
 Use `stubsFromOpenApi(doc)` to get the mappings without registering them, or `generateSample(schema, doc)` to build representative data from a single schema.
 
+Pass `{ validateRequests: true }` to hold callers to the contract: operations with a request body schema validate incoming bodies with `ajv` and answer `400` (with the violations) when they do not conform, instead of returning the success response.
+
+```ts
+wm.loadOpenApi(openapi, { validateRequests: true });
+
+// a request whose body omits a required field or uses the wrong type:
+// → 400 { "error": "Request body failed schema validation", "errors": [ ... ] }
+```
+
+`$ref`s into `#/components/schemas` resolve against the document. `compileRequestBodyValidators(doc)` and `validateRequestBody(validator, body)` are exported if you want to validate without a server.
+
+## GraphQL
+
+Stub a GraphQL endpoint by operation name. GraphQL posts `{ query, operationName, variables }`; `graphQlRequest` matches on `operationName` (ignoring the rest of the body), with an optional substring check against the query.
+
+```ts
+import { graphQlRequest, graphQlRequestedFor, okJson } from "wiremock-ts";
+
+wm.stubFor(graphQlRequest("GetUser").willReturn(okJson({ data: { user: { id: 1 } } })));
+
+// finer control, and a custom path:
+wm.stubFor(
+    graphQlRequest("Search", { path: "/api/graphql", queryContains: "first: 10" }).willReturn(
+        okJson({ data: { search: [] } }),
+    ),
+);
+
+// verify a GraphQL operation was called:
+wm.verify(graphQlRequestedFor("GetUser"));
+```
+
+The endpoint defaults to `/graphql`; override it with the `path` option. It returns the same builder as `post(...)`, so all the usual response, scenario and priority methods apply.
+
+## WebSockets
+
+Register a WebSocket endpoint at an exact path. Connecting clients receive scripted messages on connect, an echo of what they send, or a computed reply.
+
+```ts
+// push messages as soon as the client connects:
+wm.stubWebSocket("/feed", { onConnect: ["hello", "world"] });
+
+// echo everything back:
+wm.stubWebSocket("/echo", { echo: true });
+
+// compute a reply per message (return undefined to stay silent):
+wm.stubWebSocket("/rpc", { reply: (msg) => (msg === "ping" ? "pong" : undefined) });
+```
+
+Connections to a path with no stub are refused. WebSocket endpoints are served on the same port (over TLS too when `https` is set, via `wss://`).
+
 ## Verification
 
 Assert what your code sent, either by boolean or by throwing:
@@ -259,6 +326,25 @@ wm.findRequests(postRequestedFor(urlPathEqualTo("/orders")).withRequestBody(cont
 ```
 
 `getRequestedFor`, `postRequestedFor`, `putRequestedFor`, `deleteRequestedFor`, `patchRequestedFor` and `anyRequestedFor` build verification patterns and accept `.withHeader` / `.withQueryParam` / `.withRequestBody`.
+
+## Remote client SDK
+
+Drive a server running elsewhere (another process, a container, a CI service) over its admin API, using the same DSL builders. `WireMockClient` mirrors the stubbing and verification surface; its methods are async.
+
+```ts
+import { connectMock, get, getRequestedFor, okJson, urlPathEqualTo } from "wiremock-ts";
+
+const client = connectMock("http://localhost:8080", {
+    adminToken: process.env.WIREMOCK_ADMIN_TOKEN,
+});
+
+await client.stubFor(get(urlPathEqualTo("/ping")).willReturn(okJson({ pong: true })));
+// ... drive your system-under-test ...
+await client.verify(getRequestedFor(urlPathEqualTo("/ping")), 1);
+await client.resetAll();
+```
+
+Methods: `register` / `stubFor`, `listMappings`, `countRequests`, `findRequests`, `verify`, `assertReceived`, `resetMappings`, `resetRequests`, `resetAll`. Programmatic (function) responses run in-process only, so registering one through the client throws.
 
 ## CLI
 
@@ -292,14 +378,14 @@ Request bodies are validated with `zod`; malformed JSON or schema-invalid mappin
 
 `WireMockServer` (and `startMock(options)`, which constructs and starts in one call):
 
-- Lifecycle: `start()`, `stop()`, `baseUrl`, `port`, `[Symbol.asyncDispose]`
-- Stubbing: `stubFor(mapping)` / `register(mapping)`, `listMappings()`, `loadOpenApi(doc)`
+- Lifecycle: `start()`, `stop()`, `baseUrl`, `port`, `[Symbol.asyncDispose]` (options: `port`, `host`, `adminToken`, `allowedProxyHosts`, `https`)
+- Stubbing: `stubFor(mapping)` / `register(mapping)`, `listMappings()`, `loadOpenApi(doc, { validateRequests? })`, `stubWebSocket(path, options)`
 - Verification: `verify(pattern, count?)`, `assertReceived(pattern, count?)`, `countRequests(pattern)`, `findRequests(pattern)`
 - Reset: `resetMappings()`, `resetRequests()`, `resetAll()`
 - Record: `startRecording(targetBaseUrl)`, `stopRecording()`, `isRecording`
 - Interception: `interceptFetch(options?)`, `restoreFetch()`
 
-`pattern` accepts a plain `RequestPattern` or any `*RequestedFor(...)` builder. Builders, content matchers, response builders, and the OpenAPI helpers are all exported from the package root.
+`pattern` accepts a plain `RequestPattern` or any `*RequestedFor(...)` builder. Builders, content matchers, response builders, the GraphQL helpers, the OpenAPI helpers, and `WireMockClient` / `connectMock` are all exported from the package root.
 
 ## Scripts
 
@@ -315,9 +401,8 @@ Request bodies are validated with `zod`; malformed JSON or schema-invalid mappin
 
 ## Roadmap
 
-- Standalone remote HTTP client SDK
-- GraphQL / gRPC / WebSocket mocking
-- Deep request/response schema validation against the contract
+- gRPC mocking (HTTP/2 + protobuf)
+- Response-body schema validation against the contract
 
 ## Security
 
