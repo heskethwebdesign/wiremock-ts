@@ -29,9 +29,9 @@ It runs on Node's built-in `http`; the only runtime dependencies are `zod` and `
 - [CLI](#cli)
 - [Admin API](#admin-api)
 - [API reference](#api-reference)
-- [Testing](#testing)
 - [Scripts](#scripts)
 - [Roadmap](#roadmap)
+- [Contributing](#contributing)
 - [Licence](#licence)
 
 ## Install
@@ -300,15 +300,6 @@ Request bodies are validated with `zod`; malformed JSON or schema-invalid mappin
 
 `pattern` accepts a plain `RequestPattern` or any `*RequestedFor(...)` builder. Builders, content matchers, response builders, and the OpenAPI helpers are all exported from the package root.
 
-## Testing
-
-The suite is **45 tests** run with [Vitest](https://vitest.dev/), split between:
-
-- **Unit tests** for pure logic — content matchers, the request matcher, the template renderer, OpenAPI generation, and the builders.
-- **Integration tests** that start a real server on an ephemeral port and drive it over `fetch` — stubbing, scenarios, faults, templating, proxying, record/playback, the admin API, and `fetch` interception. Proxy and record/playback tests run a second server as the upstream.
-
-Coverage (`npm run test:coverage`, V8 provider): **~87% statements, ~90% lines, ~90% functions, ~74% branches**. The `cli.ts` entrypoint is excluded from the figure — it's verified by an end-to-end run (and by the `fleet mock` integration that spawns it) rather than unit tests; `index.ts` is excluded as it only re-exports.
-
 ## Scripts
 
 | Script                  | Description                                |
@@ -326,6 +317,10 @@ Coverage (`npm run test:coverage`, V8 provider): **~87% statements, ~90% lines, 
 - Standalone remote HTTP client SDK
 - GraphQL / gRPC / WebSocket mocking
 - Deep request/response schema validation against the contract
+
+## Contributing
+
+Contributions are welcome — please read [CONTRIBUTING.md](./CONTRIBUTING.md) first. It covers the project's conventions (exact-pinned dependencies, extensionless ESM imports, named exports, the ESLint/Prettier setup) and the `typecheck → lint → format:check → test → build` gate every change must pass.
 
 ## Licence
 
