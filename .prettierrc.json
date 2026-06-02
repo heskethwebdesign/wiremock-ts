@@ -1,0 +1,7 @@
+{
+    "plugins": ["@ianvs/prettier-plugin-sort-imports"],
+    "tabWidth": 4,
+    "printWidth": 100,
+    "importOrder": ["<BUILTIN_MODULES>", "", "<THIRD_PARTY_MODULES>", "", "^[.]"],
+    "importOrderTypeScriptVersion": "6.0.3"
+}

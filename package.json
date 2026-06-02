@@ -1,0 +1,72 @@
+{
+    "name": "wiremock-ts",
+    "version": "0.1.0",
+    "description": "A TypeScript-first HTTP mock server — WireMock, reimagined.",
+    "type": "module",
+    "license": "MIT",
+    "author": "Hesketh Web Design",
+    "keywords": [
+        "wiremock",
+        "mock",
+        "http-mock",
+        "api-mock",
+        "stub",
+        "testing",
+        "typescript"
+    ],
+    "homepage": "https://github.com/heskethwebdesign/wiremock-ts#readme",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/heskethwebdesign/wiremock-ts.git"
+    },
+    "bugs": {
+        "url": "https://github.com/heskethwebdesign/wiremock-ts/issues"
+    },
+    "bin": {
+        "wiremock-ts": "./dist/cli.js"
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "engines": {
+        "node": ">=20"
+    },
+    "scripts": {
+        "dev": "tsx watch src/cli.ts",
+        "build": "tsup src/index.ts src/cli.ts --format esm --dts --clean --target node20",
+        "start": "node dist/cli.js",
+        "typecheck": "tsc --noEmit",
+        "lint": "eslint",
+        "lint:fix": "eslint --fix",
+        "format": "prettier --write .",
+        "format:check": "prettier --check .",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "prepublishOnly": "npm run build"
+    },
+    "dependencies": {
+        "jsonpath-plus": "10.4.0",
+        "zod": "4.4.3"
+    },
+    "devDependencies": {
+        "@eslint/js": "10.0.1",
+        "@ianvs/prettier-plugin-sort-imports": "4.7.1",
+        "@types/node": "25.9.1",
+        "eslint": "10.4.1",
+        "eslint-config-prettier": "10.1.8",
+        "prettier": "3.8.3",
+        "tsup": "8.5.1",
+        "tsx": "4.22.4",
+        "typescript": "6.0.3",
+        "typescript-eslint": "8.60.1",
+        "vitest": "4.1.8"
+    }
+}
