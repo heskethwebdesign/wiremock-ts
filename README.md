@@ -1,5 +1,10 @@
 # wiremock-ts
 
+[![npm version](https://img.shields.io/npm/v/wiremock-ts.svg)](https://www.npmjs.com/package/wiremock-ts)
+[![CI](https://github.com/heskethwebdesign/wiremock-ts/actions/workflows/ci.yml/badge.svg)](https://github.com/heskethwebdesign/wiremock-ts/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/wiremock-ts.svg)](./LICENSE)
+[![node](https://img.shields.io/node/v/wiremock-ts.svg)](https://nodejs.org)
+
 A TypeScript-first HTTP mock server — [WireMock](https://wiremock.org/), reimagined for the Node/TS ecosystem.
 
 Stand up a real HTTP server that returns the responses you stub, match incoming requests on almost anything, and verify what your code actually sent — through a fully-typed fluent API, a REST admin API, or a CLI. The same stubs can also serve **in-process** by intercepting `fetch`, with no socket at all.

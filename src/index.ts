@@ -1,12 +1,12 @@
-export { RequestJournal } from "./core/requestJournal";
-export { StubRegistry } from "./core/stubRegistry";
 export {
     generateSample,
+    stubsFromOpenApi,
     type OpenApiDocument,
     type OpenApiSchema,
-    stubsFromOpenApi,
 } from "./contract/openapi";
-export { startMock, WireMockServer, type WireMockOptions } from "./core/server";
+export { RequestJournal } from "./core/requestJournal";
+export { WireMockServer, startMock, type WireMockOptions } from "./core/server";
+export { StubRegistry } from "./core/stubRegistry";
 export { renderTemplate } from "./core/templating";
 export * from "./dsl/builders";
 export { matchContentPattern } from "./matching/matchers";
