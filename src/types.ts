@@ -15,6 +15,16 @@ export const HTTP_METHODS = [
 
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 
+// connection-level faults the server can inject instead of a normal response.
+export const FAULTS = [
+    "connection-reset",
+    "empty-response",
+    "malformed-chunk",
+    "random-then-close",
+] as const;
+
+export type Fault = (typeof FAULTS)[number];
+
 // a single value matcher, modelled on wiremock content patterns. all present
 // keys must be satisfied for the pattern to match.
 export const contentPatternSchema = z.object({
@@ -53,6 +63,10 @@ export const responseDefinitionSchema = z.object({
     base64Body: z.string().optional(),
     headers: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
     fixedDelayMilliseconds: z.number().int().nonnegative().optional(),
+    // when true, body/header values are rendered as {{ ... }} templates.
+    transform: z.boolean().optional(),
+    // inject a connection-level fault instead of a normal response.
+    fault: z.enum(FAULTS).optional(),
 });
 
 export type ResponseDefinition = z.infer<typeof responseDefinitionSchema>;
@@ -61,6 +75,11 @@ export const stubMappingSchema = z.object({
     id: z.string().optional(),
     name: z.string().optional(),
     priority: z.number().int().optional(),
+    // stateful scenarios: a stub only matches while its scenario is in
+    // requiredScenarioState, and serving it transitions to newScenarioState.
+    scenarioName: z.string().optional(),
+    requiredScenarioState: z.string().optional(),
+    newScenarioState: z.string().optional(),
     request: requestPatternSchema,
     response: responseDefinitionSchema,
 });

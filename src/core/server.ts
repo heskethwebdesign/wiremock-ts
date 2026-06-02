@@ -1,10 +1,18 @@
+import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import { handleAdmin } from "../admin/adminApi";
-import type { LoggedRequest, RequestPattern, ResponseDefinition, StubMapping } from "../types";
+import type {
+    Fault,
+    LoggedRequest,
+    RequestPattern,
+    ResponseDefinition,
+    StubMapping,
+} from "../types";
 import { normaliseHeaders, readBody, stripQuery } from "../util/http";
 import { RequestJournal } from "./requestJournal";
 import { StubRegistry } from "./stubRegistry";
+import { renderTemplate } from "./templating";
 
 const ADMIN_PREFIX = "/__admin";
 
@@ -24,6 +32,9 @@ const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
     res.writeHead(status, { "content-type": "application/json" });
     res.end(payload);
 };
+
+const renderHeader = (value: string | string[], req: LoggedRequest): string | string[] =>
+    Array.isArray(value) ? value.map((v) => renderTemplate(v, req)) : renderTemplate(value, req);
 
 export class WireMockServer {
     readonly registry = new StubRegistry();
@@ -143,7 +154,10 @@ export class WireMockServer {
             });
             return;
         }
-        await this.#sendStub(res, match.response);
+        if (match.scenarioName !== undefined && match.newScenarioState !== undefined) {
+            this.registry.setScenarioState(match.scenarioName, match.newScenarioState);
+        }
+        await this.#sendStub(res, match.response, logged);
     }
 
     #toLogged(req: IncomingMessage, url: string, method: string, body: string): LoggedRequest {
@@ -163,19 +177,33 @@ export class WireMockServer {
         };
     }
 
-    async #sendStub(res: ServerResponse, definition: ResponseDefinition): Promise<void> {
+    async #sendStub(
+        res: ServerResponse,
+        definition: ResponseDefinition,
+        req: LoggedRequest,
+    ): Promise<void> {
         if (definition.fixedDelayMilliseconds) await sleep(definition.fixedDelayMilliseconds);
 
-        const headers: Record<string, string | string[]> = { ...definition.headers };
-        let payload: string | Buffer = "";
+        if (definition.fault !== undefined) {
+            this.#injectFault(res, definition.fault);
+            return;
+        }
 
+        const transform = definition.transform === true;
+        const headers: Record<string, string | string[]> = {};
+        for (const [name, value] of Object.entries(definition.headers ?? {})) {
+            headers[name] = transform ? renderHeader(value, req) : value;
+        }
+
+        let payload: string | Buffer = "";
         if (definition.jsonBody !== undefined) {
-            payload = JSON.stringify(definition.jsonBody);
+            const json = JSON.stringify(definition.jsonBody);
+            payload = transform ? renderTemplate(json, req) : json;
             if (!hasHeader(headers, "content-type")) headers["content-type"] = "application/json";
         } else if (definition.base64Body !== undefined) {
             payload = Buffer.from(definition.base64Body, "base64");
         } else if (definition.body !== undefined) {
-            payload = definition.body;
+            payload = transform ? renderTemplate(definition.body, req) : definition.body;
         }
 
         const httpStatus = definition.status ?? 200;
@@ -185,6 +213,32 @@ export class WireMockServer {
             res.writeHead(httpStatus, headers);
         }
         res.end(payload);
+    }
+
+    #injectFault(res: ServerResponse, fault: Fault): void {
+        const socket = res.socket;
+        if (!socket) {
+            res.end();
+            return;
+        }
+        switch (fault) {
+            case "empty-response":
+                // close cleanly without sending any bytes.
+                socket.end();
+                return;
+            case "connection-reset":
+                // abort the connection with an rst.
+                socket.destroy();
+                return;
+            case "malformed-chunk":
+                socket.write("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\ngarbage");
+                socket.destroy();
+                return;
+            case "random-then-close":
+                socket.write(randomBytes(32));
+                socket.destroy();
+                return;
+        }
     }
 
     #fail(res: ServerResponse, err: unknown): void {

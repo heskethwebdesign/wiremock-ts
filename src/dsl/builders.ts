@@ -1,5 +1,6 @@
 import type {
     ContentPattern,
+    Fault,
     HttpMethod,
     RequestPattern,
     ResponseDefinition,
@@ -67,6 +68,17 @@ export class ResponseBuilder {
         return this;
     }
 
+    // render body and header values as {{ ... }} templates when served.
+    withTransform(): this {
+        this.#response.transform = true;
+        return this;
+    }
+
+    withFault(fault: Fault): this {
+        this.#response.fault = fault;
+        return this;
+    }
+
     build(): ResponseDefinition {
         return { ...this.#response };
     }
@@ -96,9 +108,27 @@ export class MappingBuilder {
     #request: RequestPattern;
     #priority: number | undefined;
     #name: string | undefined;
+    #scenarioName: string | undefined;
+    #requiredScenarioState: string | undefined;
+    #newScenarioState: string | undefined;
 
     constructor(method: HttpMethod, url: Partial<RequestPattern>) {
         this.#request = { method, ...url };
+    }
+
+    inScenario(name: string): this {
+        this.#scenarioName = name;
+        return this;
+    }
+
+    whenScenarioStateIs(state: string): this {
+        this.#requiredScenarioState = state;
+        return this;
+    }
+
+    willSetStateTo(state: string): this {
+        this.#newScenarioState = state;
+        return this;
     }
 
     withQueryParam(name: string, pattern: ContentPattern): this {
@@ -131,6 +161,11 @@ export class MappingBuilder {
         const mapping: StubMapping = { request: this.#request, response: definition };
         if (this.#priority !== undefined) mapping.priority = this.#priority;
         if (this.#name !== undefined) mapping.name = this.#name;
+        if (this.#scenarioName !== undefined) mapping.scenarioName = this.#scenarioName;
+        if (this.#requiredScenarioState !== undefined) {
+            mapping.requiredScenarioState = this.#requiredScenarioState;
+        }
+        if (this.#newScenarioState !== undefined) mapping.newScenarioState = this.#newScenarioState;
         return mapping;
     }
 }

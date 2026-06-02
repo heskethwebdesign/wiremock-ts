@@ -7,6 +7,9 @@ import type { LoggedRequest, StubMapping } from "../types";
 // win, matching wiremock semantics.
 const DEFAULT_PRIORITY = Number.MAX_SAFE_INTEGER;
 
+// wiremock's implicit starting state for any scenario.
+const DEFAULT_SCENARIO_STATE = "Started";
+
 interface StoredStub {
     mapping: StubMapping;
     insertionIndex: number;
@@ -15,6 +18,7 @@ interface StoredStub {
 export class StubRegistry {
     #stubs: StoredStub[] = [];
     #counter = 0;
+    #scenarios = new Map<string, string>();
 
     register(mapping: StubMapping): StubMapping {
         const id = mapping.id ?? randomUUID();
@@ -30,7 +34,9 @@ export class StubRegistry {
     }
 
     findMatch(req: LoggedRequest): StubMapping | undefined {
-        const matches = this.#stubs.filter((s) => requestMatches(s.mapping.request, req));
+        const matches = this.#stubs.filter(
+            (s) => requestMatches(s.mapping.request, req) && this.#scenarioMatches(s.mapping),
+        );
         if (matches.length === 0) return undefined;
         matches.sort((a, b) => {
             const pa = a.mapping.priority ?? DEFAULT_PRIORITY;
@@ -57,8 +63,24 @@ export class StubRegistry {
         return true;
     }
 
+    getScenarioState(name: string): string {
+        return this.#scenarios.get(name) ?? DEFAULT_SCENARIO_STATE;
+    }
+
+    setScenarioState(name: string, state: string): void {
+        this.#scenarios.set(name, state);
+    }
+
+    #scenarioMatches(mapping: StubMapping): boolean {
+        if (mapping.requiredScenarioState === undefined || mapping.scenarioName === undefined) {
+            return true;
+        }
+        return this.getScenarioState(mapping.scenarioName) === mapping.requiredScenarioState;
+    }
+
     reset(): void {
         this.#stubs = [];
         this.#counter = 0;
+        this.#scenarios.clear();
     }
 }
