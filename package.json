@@ -1,6 +1,6 @@
 {
     "name": "wiremock-ts",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "description": "A TypeScript-first HTTP mock server — WireMock, reimagined.",
     "type": "module",
     "license": "MIT",

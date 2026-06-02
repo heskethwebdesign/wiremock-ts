@@ -86,6 +86,13 @@ export const stubMappingSchema = z.object({
 
 export type StubMapping = z.infer<typeof stubMappingSchema>;
 
+// a response computed per request — in-process only, never serialised.
+export type ResponseProvider = (req: LoggedRequest) => ResponseDefinition;
+
+// a mapping as held in the registry; may carry a runtime response provider
+// that takes precedence over the static response.
+export type RegisteredStub = StubMapping & { responseProvider?: ResponseProvider };
+
 // a request as observed by the server, used for matching and the journal.
 export interface LoggedRequest {
     method: string;

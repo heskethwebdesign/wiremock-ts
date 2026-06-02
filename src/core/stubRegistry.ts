@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { requestMatches } from "../matching/requestMatcher";
-import type { LoggedRequest, StubMapping } from "../types";
+import type { LoggedRequest, RegisteredStub, StubMapping } from "../types";
 
 // stubs without an explicit priority sort below any that set one. lower numbers
 // win, matching wiremock semantics.
@@ -11,7 +11,7 @@ const DEFAULT_PRIORITY = Number.MAX_SAFE_INTEGER;
 const DEFAULT_SCENARIO_STATE = "Started";
 
 interface StoredStub {
-    mapping: StubMapping;
+    mapping: RegisteredStub;
     insertionIndex: number;
 }
 
@@ -20,9 +20,9 @@ export class StubRegistry {
     #counter = 0;
     #scenarios = new Map<string, string>();
 
-    register(mapping: StubMapping): StubMapping {
+    register(mapping: RegisteredStub): RegisteredStub {
         const id = mapping.id ?? randomUUID();
-        const stored: StubMapping = { ...mapping, id };
+        const stored: RegisteredStub = { ...mapping, id };
         const entry: StoredStub = { mapping: stored, insertionIndex: this.#counter++ };
         const existing = this.#stubs.findIndex((s) => s.mapping.id === id);
         if (existing === -1) {
@@ -33,7 +33,7 @@ export class StubRegistry {
         return stored;
     }
 
-    findMatch(req: LoggedRequest): StubMapping | undefined {
+    findMatch(req: LoggedRequest): RegisteredStub | undefined {
         const matches = this.#stubs.filter(
             (s) => requestMatches(s.mapping.request, req) && this.#scenarioMatches(s.mapping),
         );
@@ -52,7 +52,7 @@ export class StubRegistry {
         return this.#stubs.map((s) => s.mapping);
     }
 
-    getById(id: string): StubMapping | undefined {
+    getById(id: string): RegisteredStub | undefined {
         return this.#stubs.find((s) => s.mapping.id === id)?.mapping;
     }
 

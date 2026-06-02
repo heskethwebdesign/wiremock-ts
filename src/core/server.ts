@@ -2,9 +2,11 @@ import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import { handleAdmin } from "../admin/adminApi";
+import type { RequestPatternBuilder } from "../dsl/builders";
 import type {
     Fault,
     LoggedRequest,
+    RegisteredStub,
     RequestPattern,
     ResponseDefinition,
     StubMapping,
@@ -36,6 +38,9 @@ const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
 const renderHeader = (value: string | string[], req: LoggedRequest): string | string[] =>
     Array.isArray(value) ? value.map((v) => renderTemplate(v, req)) : renderTemplate(value, req);
 
+const toPattern = (pattern: RequestPattern | RequestPatternBuilder): RequestPattern =>
+    "build" in pattern ? pattern.build() : pattern;
+
 export class WireMockServer {
     readonly registry = new StubRegistry();
     readonly journal = new RequestJournal();
@@ -52,11 +57,11 @@ export class WireMockServer {
 
     // ---- stubbing + verification (in-process api) ---------------------------
 
-    register(mapping: StubMapping): StubMapping {
+    register(mapping: RegisteredStub): RegisteredStub {
         return this.registry.register(mapping);
     }
 
-    stubFor(mapping: StubMapping): StubMapping {
+    stubFor(mapping: RegisteredStub): RegisteredStub {
         return this.register(mapping);
     }
 
@@ -64,17 +69,30 @@ export class WireMockServer {
         return this.registry.list();
     }
 
-    countRequests(pattern: RequestPattern): number {
-        return this.journal.count(pattern);
+    countRequests(pattern: RequestPattern | RequestPatternBuilder): number {
+        return this.journal.count(toPattern(pattern));
     }
 
-    findRequests(pattern: RequestPattern): LoggedRequest[] {
-        return this.journal.findMatching(pattern);
+    findRequests(pattern: RequestPattern | RequestPatternBuilder): LoggedRequest[] {
+        return this.journal.findMatching(toPattern(pattern));
     }
 
-    verify(pattern: RequestPattern, count?: number): boolean {
-        const actual = this.journal.count(pattern);
+    verify(pattern: RequestPattern | RequestPatternBuilder, count?: number): boolean {
+        const actual = this.journal.count(toPattern(pattern));
         return count === undefined ? actual > 0 : actual === count;
+    }
+
+    // throws with a helpful message when the expectation is not met.
+    assertReceived(pattern: RequestPattern | RequestPatternBuilder, count?: number): void {
+        const resolved = toPattern(pattern);
+        const actual = this.journal.count(resolved);
+        const satisfied = count === undefined ? actual > 0 : actual === count;
+        if (!satisfied) {
+            const expected = count === undefined ? "at least one" : String(count);
+            throw new Error(
+                `expected ${expected} request(s) matching ${JSON.stringify(resolved)}, received ${actual}`,
+            );
+        }
     }
 
     resetMappings(): void {
@@ -128,6 +146,11 @@ export class WireMockServer {
         });
     }
 
+    // enables `await using server = await startMock()` automatic cleanup.
+    async [Symbol.asyncDispose](): Promise<void> {
+        await this.stop();
+    }
+
     // ---- request handling ---------------------------------------------------
 
     async #handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -157,7 +180,8 @@ export class WireMockServer {
         if (match.scenarioName !== undefined && match.newScenarioState !== undefined) {
             this.registry.setScenarioState(match.scenarioName, match.newScenarioState);
         }
-        await this.#sendStub(res, match.response, logged);
+        const definition = match.responseProvider ? match.responseProvider(logged) : match.response;
+        await this.#sendStub(res, definition, logged);
     }
 
     #toLogged(req: IncomingMessage, url: string, method: string, body: string): LoggedRequest {
@@ -249,3 +273,7 @@ export class WireMockServer {
         sendJson(res, 500, { error: "Internal mock server error", detail: String(err) });
     }
 }
+
+// convenience for tests: construct and start a server in one step.
+export const startMock = (options?: WireMockOptions): Promise<WireMockServer> =>
+    new WireMockServer(options).start();

@@ -2,9 +2,10 @@ import type {
     ContentPattern,
     Fault,
     HttpMethod,
+    LoggedRequest,
+    RegisteredStub,
     RequestPattern,
     ResponseDefinition,
-    StubMapping,
 } from "../types";
 
 // ---- url matchers -----------------------------------------------------------
@@ -102,6 +103,9 @@ export const notFound = (body?: string): ResponseBuilder => {
     return body === undefined ? builder : builder.withBody(body);
 };
 
+// a per-request response factory for programmatic stubs (in-process only).
+export type ResponseFactory = (req: LoggedRequest) => ResponseBuilder | ResponseDefinition;
+
 // ---- mapping builder --------------------------------------------------------
 
 export class MappingBuilder {
@@ -156,9 +160,16 @@ export class MappingBuilder {
         return this;
     }
 
-    willReturn(response: ResponseBuilder | ResponseDefinition): StubMapping {
-        const definition = response instanceof ResponseBuilder ? response.build() : response;
-        const mapping: StubMapping = { request: this.#request, response: definition };
+    willReturn(response: ResponseBuilder | ResponseDefinition | ResponseFactory): RegisteredStub {
+        const mapping: RegisteredStub = { request: this.#request, response: {} };
+        if (typeof response === "function") {
+            mapping.responseProvider = (req: LoggedRequest): ResponseDefinition => {
+                const produced = response(req);
+                return produced instanceof ResponseBuilder ? produced.build() : produced;
+            };
+        } else {
+            mapping.response = response instanceof ResponseBuilder ? response.build() : response;
+        }
         if (this.#priority !== undefined) mapping.priority = this.#priority;
         if (this.#name !== undefined) mapping.name = this.#name;
         if (this.#scenarioName !== undefined) mapping.scenarioName = this.#scenarioName;
@@ -183,3 +194,44 @@ export const patch = forMethod("PATCH");
 export const head = forMethod("HEAD");
 export const options = forMethod("OPTIONS");
 export const any = forMethod("ANY");
+
+// ---- request verification builders ------------------------------------------
+
+export class RequestPatternBuilder {
+    #pattern: RequestPattern;
+
+    constructor(method: HttpMethod, url: Partial<RequestPattern>) {
+        this.#pattern = { method, ...url };
+    }
+
+    withQueryParam(name: string, pattern: ContentPattern): this {
+        (this.#pattern.queryParameters ??= {})[name] = pattern;
+        return this;
+    }
+
+    withHeader(name: string, pattern: ContentPattern): this {
+        (this.#pattern.headers ??= {})[name] = pattern;
+        return this;
+    }
+
+    withRequestBody(pattern: ContentPattern): this {
+        (this.#pattern.bodyPatterns ??= []).push(pattern);
+        return this;
+    }
+
+    build(): RequestPattern {
+        return this.#pattern;
+    }
+}
+
+const requestedFor =
+    (method: HttpMethod) =>
+    (url: Partial<RequestPattern>): RequestPatternBuilder =>
+        new RequestPatternBuilder(method, url);
+
+export const getRequestedFor = requestedFor("GET");
+export const postRequestedFor = requestedFor("POST");
+export const putRequestedFor = requestedFor("PUT");
+export const deleteRequestedFor = requestedFor("DELETE");
+export const patchRequestedFor = requestedFor("PATCH");
+export const anyRequestedFor = requestedFor("ANY");
