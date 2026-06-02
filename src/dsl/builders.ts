@@ -80,6 +80,11 @@ export class ResponseBuilder {
         return this;
     }
 
+    withProxyBaseUrl(baseUrl: string): this {
+        this.#response.proxyBaseUrl = baseUrl;
+        return this;
+    }
+
     build(): ResponseDefinition {
         return { ...this.#response };
     }
@@ -102,6 +107,8 @@ export const notFound = (body?: string): ResponseBuilder => {
     const builder = new ResponseBuilder().withStatus(404);
     return body === undefined ? builder : builder.withBody(body);
 };
+export const proxiedFrom = (baseUrl: string): ResponseBuilder =>
+    new ResponseBuilder().withProxyBaseUrl(baseUrl);
 
 // a per-request response factory for programmatic stubs (in-process only).
 export type ResponseFactory = (req: LoggedRequest) => ResponseBuilder | ResponseDefinition;

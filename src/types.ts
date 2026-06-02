@@ -67,6 +67,9 @@ export const responseDefinitionSchema = z.object({
     transform: z.boolean().optional(),
     // inject a connection-level fault instead of a normal response.
     fault: z.enum(FAULTS).optional(),
+    // when set, the request is forwarded to this base url and the upstream
+    // response is returned (reverse proxy).
+    proxyBaseUrl: z.string().optional(),
 });
 
 export type ResponseDefinition = z.infer<typeof responseDefinitionSchema>;

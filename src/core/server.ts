@@ -41,6 +41,37 @@ const renderHeader = (value: string | string[], req: LoggedRequest): string | st
 const toPattern = (pattern: RequestPattern | RequestPatternBuilder): RequestPattern =>
     "build" in pattern ? pattern.build() : pattern;
 
+// headers we never copy verbatim from an upstream response, because we
+// re-frame the body ourselves.
+const STRIPPED_RESPONSE_HEADERS = new Set([
+    "content-length",
+    "content-encoding",
+    "transfer-encoding",
+]);
+
+interface ProxiedResponse {
+    status: number;
+    headers: Record<string, string>;
+    body: string;
+}
+
+const proxyRequest = async (
+    targetBaseUrl: string,
+    req: LoggedRequest,
+): Promise<ProxiedResponse> => {
+    const headers: Record<string, string> = { ...req.headers };
+    delete headers.host;
+    const init: RequestInit = { method: req.method, headers };
+    if (req.method !== "GET" && req.method !== "HEAD" && req.body.length > 0) init.body = req.body;
+
+    const upstream = await fetch(`${targetBaseUrl.replace(/\/+$/, "")}${req.url}`, init);
+    const responseHeaders: Record<string, string> = {};
+    upstream.headers.forEach((value, key) => {
+        if (!STRIPPED_RESPONSE_HEADERS.has(key.toLowerCase())) responseHeaders[key] = value;
+    });
+    return { status: upstream.status, headers: responseHeaders, body: await upstream.text() };
+};
+
 export class WireMockServer {
     readonly registry = new StubRegistry();
     readonly journal = new RequestJournal();
@@ -49,6 +80,7 @@ export class WireMockServer {
     readonly #port: number;
     readonly #host: string;
     #boundPort = 0;
+    #recording: { target: string; captured: StubMapping[] } | undefined;
 
     constructor(options: WireMockOptions = {}) {
         this.#port = options.port ?? 8080;
@@ -106,6 +138,26 @@ export class WireMockServer {
     resetAll(): void {
         this.registry.reset();
         this.journal.reset();
+    }
+
+    // ---- record / playback --------------------------------------------------
+
+    // proxy every subsequent request to targetBaseUrl and capture each
+    // request/response pair as a stub mapping.
+    startRecording(targetBaseUrl: string): void {
+        this.#recording = { target: targetBaseUrl, captured: [] };
+    }
+
+    // stop recording and return the captured mappings (replay them with
+    // stubFor to play back offline).
+    stopRecording(): StubMapping[] {
+        const captured = this.#recording?.captured ?? [];
+        this.#recording = undefined;
+        return captured;
+    }
+
+    get isRecording(): boolean {
+        return this.#recording !== undefined;
     }
 
     // ---- lifecycle ----------------------------------------------------------
@@ -168,6 +220,11 @@ export class WireMockServer {
         const logged = this.#toLogged(req, url, method, body);
         this.journal.record(logged);
 
+        if (this.#recording !== undefined) {
+            await this.#proxyAndRecord(res, this.#recording, logged);
+            return;
+        }
+
         const match = this.registry.findMatch(logged);
         if (!match) {
             sendJson(res, 404, {
@@ -208,6 +265,13 @@ export class WireMockServer {
     ): Promise<void> {
         if (definition.fixedDelayMilliseconds) await sleep(definition.fixedDelayMilliseconds);
 
+        if (definition.proxyBaseUrl !== undefined) {
+            const proxied = await proxyRequest(definition.proxyBaseUrl, req);
+            res.writeHead(proxied.status, proxied.headers);
+            res.end(proxied.body);
+            return;
+        }
+
         if (definition.fault !== undefined) {
             this.#injectFault(res, definition.fault);
             return;
@@ -237,6 +301,20 @@ export class WireMockServer {
             res.writeHead(httpStatus, headers);
         }
         res.end(payload);
+    }
+
+    async #proxyAndRecord(
+        res: ServerResponse,
+        recording: { target: string; captured: StubMapping[] },
+        req: LoggedRequest,
+    ): Promise<void> {
+        const proxied = await proxyRequest(recording.target, req);
+        recording.captured.push({
+            request: { method: req.method as RequestPattern["method"], urlPath: req.urlPath },
+            response: { status: proxied.status, body: proxied.body, headers: proxied.headers },
+        });
+        res.writeHead(proxied.status, proxied.headers);
+        res.end(proxied.body);
     }
 
     #injectFault(res: ServerResponse, fault: Fault): void {
