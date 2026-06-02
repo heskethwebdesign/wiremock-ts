@@ -85,6 +85,11 @@ export class ResponseBuilder {
         return this;
     }
 
+    withBase64Body(base64: string): this {
+        this.#response.base64Body = base64;
+        return this;
+    }
+
     build(): ResponseDefinition {
         return { ...this.#response };
     }

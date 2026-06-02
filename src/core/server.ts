@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import { handleAdmin } from "../admin/adminApi";
@@ -22,6 +22,11 @@ const ADMIN_PREFIX = "/__admin";
 export interface WireMockOptions {
     port?: number;
     host?: string;
+    // when set, every /__admin request must present this token via
+    // `Authorization: Bearer <token>` or `X-Admin-Token: <token>`.
+    adminToken?: string;
+    // when set, proxy and record targets are restricted to these hostnames.
+    allowedProxyHosts?: string[];
 }
 
 const sleep = (milliseconds: number): Promise<void> =>
@@ -41,6 +46,12 @@ const renderHeader = (value: string | string[], req: LoggedRequest): string | st
 
 const toPattern = (pattern: RequestPattern | RequestPatternBuilder): RequestPattern =>
     "build" in pattern ? pattern.build() : pattern;
+
+const timingSafeEqualStr = (a: string, b: string): boolean => {
+    const ab = Buffer.from(a);
+    const bb = Buffer.from(b);
+    return ab.length === bb.length && timingSafeEqual(ab, bb);
+};
 
 // headers we never copy verbatim from an upstream response, because we
 // re-frame the body ourselves.
@@ -83,10 +94,32 @@ export class WireMockServer {
     #boundPort = 0;
     #recording: { target: string; captured: StubMapping[] } | undefined;
     #originalFetch: typeof fetch | undefined;
+    readonly #adminToken: string | undefined;
+    readonly #allowedProxyHosts: string[] | undefined;
 
     constructor(options: WireMockOptions = {}) {
         this.#port = options.port ?? 8080;
         this.#host = options.host ?? "127.0.0.1";
+        this.#adminToken = options.adminToken;
+        this.#allowedProxyHosts = options.allowedProxyHosts;
+    }
+
+    #adminAuthorised(req: IncomingMessage): boolean {
+        if (this.#adminToken === undefined) return true;
+        const header = req.headers["x-admin-token"] ?? req.headers["authorization"];
+        const provided = Array.isArray(header) ? header[0] : header;
+        if (provided === undefined) return false;
+        const token = provided.startsWith("Bearer ") ? provided.slice(7) : provided;
+        return timingSafeEqualStr(token, this.#adminToken);
+    }
+
+    #isProxyAllowed(targetBaseUrl: string): boolean {
+        if (this.#allowedProxyHosts === undefined) return true;
+        try {
+            return this.#allowedProxyHosts.includes(new URL(targetBaseUrl).hostname);
+        } catch {
+            return false;
+        }
     }
 
     // ---- stubbing + verification (in-process api) ---------------------------
@@ -155,6 +188,9 @@ export class WireMockServer {
     // proxy every subsequent request to targetBaseUrl and capture each
     // request/response pair as a stub mapping.
     startRecording(targetBaseUrl: string): void {
+        if (!this.#isProxyAllowed(targetBaseUrl)) {
+            throw new Error(`proxy target not allowed: ${targetBaseUrl}`);
+        }
         this.#recording = { target: targetBaseUrl, captured: [] };
     }
 
@@ -248,6 +284,12 @@ export class WireMockServer {
     ): Promise<Response> {
         if (definition.fixedDelayMilliseconds) await sleep(definition.fixedDelayMilliseconds);
         if (definition.proxyBaseUrl !== undefined) {
+            if (!this.#isProxyAllowed(definition.proxyBaseUrl)) {
+                return new Response(JSON.stringify({ error: "Proxy target not allowed" }), {
+                    status: 502,
+                    headers: { "content-type": "application/json" },
+                });
+            }
             const target = `${definition.proxyBaseUrl.replace(/\/+$/, "")}${req.url}`;
             const init: RequestInit = { method: req.method, headers: req.headers };
             if (req.method !== "GET" && req.method !== "HEAD" && req.body.length > 0)
@@ -341,6 +383,10 @@ export class WireMockServer {
         const body = await readBody(req);
 
         if (url === ADMIN_PREFIX || url.startsWith(`${ADMIN_PREFIX}/`)) {
+            if (!this.#adminAuthorised(req)) {
+                sendJson(res, 401, { error: "Unauthorised: a valid admin token is required" });
+                return;
+            }
             const subPath = stripQuery(url.slice(ADMIN_PREFIX.length)) || "/";
             const result = handleAdmin(this.registry, this.journal, method, subPath, body);
             sendJson(res, result.status, result.body);
@@ -396,6 +442,13 @@ export class WireMockServer {
         if (definition.fixedDelayMilliseconds) await sleep(definition.fixedDelayMilliseconds);
 
         if (definition.proxyBaseUrl !== undefined) {
+            if (!this.#isProxyAllowed(definition.proxyBaseUrl)) {
+                sendJson(res, 502, {
+                    error: "Proxy target not allowed",
+                    target: definition.proxyBaseUrl,
+                });
+                return;
+            }
             const proxied = await proxyRequest(definition.proxyBaseUrl, req);
             res.writeHead(proxied.status, proxied.headers);
             res.end(proxied.body);

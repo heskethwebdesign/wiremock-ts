@@ -31,6 +31,7 @@ It runs on Node's built-in `http`; the only runtime dependencies are `zod` and `
 - [API reference](#api-reference)
 - [Scripts](#scripts)
 - [Roadmap](#roadmap)
+- [Security](#security)
 - [Contributing](#contributing)
 - [Licence](#licence)
 
@@ -317,6 +318,26 @@ Request bodies are validated with `zod`; malformed JSON or schema-invalid mappin
 - Standalone remote HTTP client SDK
 - GraphQL / gRPC / WebSocket mocking
 - Deep request/response schema validation against the contract
+
+## Security
+
+wiremock-ts is a development and testing tool. It binds to `127.0.0.1` by default — keep it there unless you have a reason not to, because the admin API and the proxy are powerful and unauthenticated out of the box.
+
+- **The admin API is unauthenticated by default.** Anyone who can reach the port can register or delete stubs, reset state, and read the request journal — which holds the headers and bodies your system-under-test sent, including any credentials. Set `adminToken` to require `Authorization: Bearer <token>` (or `X-Admin-Token: <token>`) on every `/__admin` request:
+
+    ```ts
+    const wm = await new WireMockServer({ adminToken: process.env.WIREMOCK_ADMIN_TOKEN }).start();
+    ```
+
+- **Proxy and record can reach arbitrary URLs (SSRF).** `proxiedFrom`, `proxyBaseUrl` and `startRecording` make the server issue outbound requests. Restrict them with `allowedProxyHosts` — only listed hostnames may be proxied; anything else is refused with `502` (or a thrown error when recording):
+
+    ```ts
+    const wm = await new WireMockServer({ allowedProxyHosts: ["api.example.com"] }).start();
+    ```
+
+- **`interceptFetch()` patches global `fetch`** — it's for tests, and `stop()` / `restoreFetch()` restore the original.
+
+To report a vulnerability, see [SECURITY.md](./SECURITY.md).
 
 ## Contributing
 
