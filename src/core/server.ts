@@ -82,6 +82,7 @@ export class WireMockServer {
     readonly #host: string;
     #boundPort = 0;
     #recording: { target: string; captured: StubMapping[] } | undefined;
+    #originalFetch: typeof fetch | undefined;
 
     constructor(options: WireMockOptions = {}) {
         this.#port = options.port ?? 8080;
@@ -169,6 +170,125 @@ export class WireMockServer {
         return this.#recording !== undefined;
     }
 
+    // ---- in-process fetch interception --------------------------------------
+
+    // patch global fetch so the same stubs serve without opening a socket.
+    // unmatched requests pass through to the real fetch unless passthrough is
+    // disabled, in which case they receive a 404.
+    interceptFetch(options: { passthrough?: boolean } = {}): void {
+        if (this.#originalFetch !== undefined) return;
+        const original = globalThis.fetch;
+        this.#originalFetch = original;
+        const passthrough = options.passthrough ?? true;
+
+        const patched = async (
+            input: Parameters<typeof fetch>[0],
+            init?: Parameters<typeof fetch>[1],
+        ): Promise<Response> => {
+            const request = new Request(input, init);
+            const logged = await this.#loggedFromRequest(request);
+            this.journal.record(logged);
+
+            const match = this.registry.findMatch(logged);
+            if (match === undefined) {
+                if (passthrough) return original(input, init);
+                return new Response(
+                    JSON.stringify({ error: "No stub mapping matched the request" }),
+                    {
+                        status: 404,
+                        headers: { "content-type": "application/json" },
+                    },
+                );
+            }
+            if (match.scenarioName !== undefined && match.newScenarioState !== undefined) {
+                this.registry.setScenarioState(match.scenarioName, match.newScenarioState);
+            }
+            const definition = match.responseProvider
+                ? match.responseProvider(logged)
+                : match.response;
+            return this.#responseFor(definition, logged, original);
+        };
+
+        globalThis.fetch = patched as typeof fetch;
+    }
+
+    restoreFetch(): void {
+        if (this.#originalFetch === undefined) return;
+        globalThis.fetch = this.#originalFetch;
+        this.#originalFetch = undefined;
+    }
+
+    async #loggedFromRequest(request: Request): Promise<LoggedRequest> {
+        const url = new URL(request.url);
+        const query: Record<string, string[]> = {};
+        for (const key of url.searchParams.keys()) {
+            if (!(key in query)) query[key] = url.searchParams.getAll(key);
+        }
+        const headers: Record<string, string> = {};
+        request.headers.forEach((value, key) => {
+            headers[key.toLowerCase()] = value;
+        });
+        const body =
+            request.method === "GET" || request.method === "HEAD" ? "" : await request.text();
+        return {
+            method: request.method,
+            url: `${url.pathname}${url.search}`,
+            urlPath: url.pathname,
+            query,
+            headers,
+            body,
+            loggedAt: Date.now(),
+        };
+    }
+
+    async #responseFor(
+        definition: ResponseDefinition,
+        req: LoggedRequest,
+        original: typeof fetch,
+    ): Promise<Response> {
+        if (definition.fixedDelayMilliseconds) await sleep(definition.fixedDelayMilliseconds);
+        if (definition.proxyBaseUrl !== undefined) {
+            const target = `${definition.proxyBaseUrl.replace(/\/+$/, "")}${req.url}`;
+            const init: RequestInit = { method: req.method, headers: req.headers };
+            if (req.method !== "GET" && req.method !== "HEAD" && req.body.length > 0)
+                init.body = req.body;
+            return original(target, init);
+        }
+        if (definition.fault !== undefined) {
+            // surface as a network-level failure, mirroring a real fetch error.
+            throw new TypeError(`fetch failed: simulated fault ${definition.fault}`);
+        }
+
+        const transform = definition.transform === true;
+        const headers = new Headers();
+        for (const [name, value] of Object.entries(definition.headers ?? {})) {
+            const rendered = transform ? renderHeader(value, req) : value;
+            for (const single of Array.isArray(rendered) ? rendered : [rendered]) {
+                headers.append(name, single);
+            }
+        }
+
+        let body: string | Buffer;
+        if (definition.jsonBody !== undefined) {
+            const json = JSON.stringify(definition.jsonBody);
+            body = transform ? renderTemplate(json, req) : json;
+            if (!headers.has("content-type")) headers.set("content-type", "application/json");
+        } else if (definition.base64Body !== undefined) {
+            body = Buffer.from(definition.base64Body, "base64");
+        } else {
+            const raw = definition.body ?? "";
+            body = transform ? renderTemplate(raw, req) : raw;
+        }
+
+        return new Response(body, {
+            status: definition.status ?? 200,
+            ...(definition.statusMessage === undefined
+                ? {}
+                : { statusText: definition.statusMessage }),
+            headers,
+        });
+    }
+
     // ---- lifecycle ----------------------------------------------------------
 
     get port(): number {
@@ -199,6 +319,7 @@ export class WireMockServer {
     }
 
     async stop(): Promise<void> {
+        this.restoreFetch();
         const server = this.#server;
         if (!server) return;
         this.#server = undefined;

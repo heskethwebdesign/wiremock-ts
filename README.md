@@ -93,13 +93,23 @@ wins; on a tie the most recently registered stub wins.
 | `npm run lint`      | ESLint                             |
 | `npm run format`    | Prettier (formats + sorts imports) |
 
+## Highlights
+
+- **Stateful scenarios** — `inScenario(...).whenScenarioStateIs(...).willSetStateTo(...)`
+- **Fault injection** — `connection-reset`, `empty-response`, `malformed-chunk`, `random-then-close`
+- **Response templating** — opt-in `{{ request.* }}` / `now` / `randomUuid` rendering
+- **Reverse proxy + record/playback** — `proxiedFrom(url)`, `startRecording(url)` / `stopRecording()`
+- **Contract-first** — `loadOpenApi(spec)` / `stubsFromOpenApi(spec)` generate a mock from OpenAPI
+- **Programmatic responses** — `willReturn((req) => ...)` for fully-typed dynamic stubs
+- **Dual-mode** — a real HTTP server **or** in-process `fetch` interception (`interceptFetch()`), same stubs
+- **Modern DX** — `await using server = await startMock()`, `verify(...)`, `assertReceived(...)`
+- Native fleet integration (`fleet mock`)
+
 ## Roadmap
 
-- Response templating (Handlebars-style)
-- Proxying and record/playback
-- Stateful scenarios
-- Standalone HTTP client SDK
-- Native [fleet](https://github.com/) integration (`fleet mock`)
+- Standalone remote HTTP client SDK
+- GraphQL / gRPC / WebSocket mocking
+- Deep request/response schema validation against the contract
 
 ## Licence
 
