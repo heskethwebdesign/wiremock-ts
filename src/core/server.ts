@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import { handleAdmin } from "../admin/adminApi";
+import { stubsFromOpenApi, type OpenApiDocument } from "../contract/openapi";
 import type { RequestPatternBuilder } from "../dsl/builders";
 import type {
     Fault,
@@ -99,6 +100,14 @@ export class WireMockServer {
 
     listMappings(): StubMapping[] {
         return this.registry.list();
+    }
+
+    // register a stub for every operation in an openapi document and return
+    // the generated mappings.
+    loadOpenApi(doc: OpenApiDocument): StubMapping[] {
+        const stubs = stubsFromOpenApi(doc);
+        for (const stub of stubs) this.register(stub);
+        return stubs;
     }
 
     countRequests(pattern: RequestPattern | RequestPatternBuilder): number {
